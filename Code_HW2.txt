@@ -1,7 +1,247 @@
-I will include my code below. 
+#I will include my code below. I had to use different code for each of the server.js files on each instance as the same code wouldn't work on both. 
 
-Code for Server.js: 
+##Code for server.js for instance 34.133.250.207:
+const express = require('express'); 
+const mariadb = require('mariadb'); 
+const path = require('path'); 
+const bodyParser = require('body-parser');
+const axios = require('axios');  
+
+const app = express(); 
+const port = 80; 
+
+const pool = mariadb.createPool({
+  host: '127.0.0.1', 
+  port: 3306, 
+  user: 'aartr16', 
+  password: 'secret',
+  database: 'bankdb', 
+  connectionLimit: 200
+}); 
+
+app.set('view engine', 'ejs'); 
+app.set('views', path.join(__dirname, 'views')); 
+
+app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true })); 
+app.use(express.urlencoded({ extended: true }));
 
 
+app.get('/greeting', (req, res) => {
+  res.send('<h1>Hello World!</h1>'); 
+}); 
+ 
 
-Code for frontend: 
+app.post('/register', async (req, res) => {
+  const { username } = req.body;  
+  if (!username) {
+    return res.status(400).json({ error: "Please enter your username!" });
+  }
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('INSERT INTO users (username) VALUES (?)', [username]);
+    try {
+      await axios.post('http://34.31.133.79:80/register', { username });
+    } catch (err) {
+      console.error('Error notifying first instance:', err.message);
+    }
+    res.json({ message: `User ${username} registered successfully!` });
+  } catch (err) {
+    res.status(500).json({ error: `Error adding user: ${err.message}` });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
+app.get('/list', async (req, res) => {
+  try {
+    const localUsers = await getLocalUsers();
+    const remoteUsers = await getRemoteUsers();
+
+    const allUsers = [...new Set([...localUsers, ...remoteUsers])];
+    res.json({ users: allUsers });
+  } catch (err) {
+    res.status(500).json({ error: `Error retrieving users: ${err}` });
+  }
+});
+
+async function getLocalUsers() {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const users = await conn.query('SELECT username FROM users');
+    return users.map(user => user.username);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+async function getRemoteUsers() {
+  try {
+    const response = await axios.get('http://34.31.133.79/local-list');
+    return response.data.users;
+  } catch (err) {
+    console.error('Error fetching users from other instance:', err);
+    return [];
+  }
+}
+
+app.get('/local-list', async (req, res) => {
+  try {
+    const localUsers = await getLocalUsers();
+    res.json({ users: localUsers });
+  } catch (err) {
+    res.status(500).json({ error: `Error retrieving users from local list: ${err}` });
+  }
+});
+
+app.post('/clear', async (req, res) => { 
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM users');  
+
+    const otherInstanceIP = 'http://34.31.133.79';  
+    await axios.post(`http://34.31.133.79/clear`)  
+      .then(response => {
+        console.log('Other instance cleared successfully');
+      })
+      .catch(error => {
+        console.error('Error clearing other instance:', error.message);
+      });
+    res.send('All users deleted!');
+  } catch (err) {
+    res.status(500).send(`Error clearing users: ${err.message}`);
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.listen(port, () => { 
+  console.log(`Server is running on http://localhost:${port}`); 
+});
+    
+
+
+##Code for server.js for instance 34.31.133.79: 
+const express = require('express'); 
+const mariadb = require('mariadb'); 
+const path = require('path'); 
+const bodyParser = require('body-parser');
+const axios = require('axios'); 
+
+const app = express(); 
+const port = 80; 
+
+const pool = mariadb.createPool({
+  host: '127.0.0.1', 
+  port: 3306, 
+  user: 'aartr16', 
+  password: 'secret',
+  database: 'bankdb', 
+  connectionLimit: 200
+}); 
+
+app.set('view engine', 'ejs'); 
+app.set('views', path.join(__dirname, 'views')); 
+
+app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true })); 
+app.use(express.urlencoded({ extended: true })); 
+
+app.get('/greeting', (req, res) => {
+  res.send('<h1>Hello World!</h1>'); 
+}); 
+
+app.post('/register', async (req, res) => {
+  const { username } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: "Please enter your username!" });
+  }
+  try {
+    await registerUser(username);
+    await axios.post('http://34.133.250.207/register', { username });
+
+    res.status(201).json({ message: `User ${username} registered successfully` });
+  } catch (err) {
+    res.status(500).json({ error: `Error registering user: ${err}` });
+  }
+});
+
+async function registerUser(username) {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('INSERT INTO users (username) VALUES (?)', [username]);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+app.get('/list', async (req, res) => {
+  try {
+    const localUsers = await getLocalUsers();
+    const remoteUsers = await getRemoteUsers();
+
+    const allUsers = [...new Set([...localUsers, ...remoteUsers])];
+    res.json({ users: allUsers });
+  } catch (err) {
+    res.status(500).json({ error: `Error retrieving users: ${err}` });
+  }
+});
+
+async function getLocalUsers() {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const users = await conn.query('SELECT username FROM users');
+    return users.map(user => user.username);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+async function getRemoteUsers() {
+  try {
+    const response = await axios.get('http://34.133.250.207/local-list');
+    return response.data.users;
+  } catch (err) {
+    console.error('Error fetching users from other instance:', err);
+    return [];
+  }
+}
+
+app.get('/local-list', async (req, res) => {
+  try {
+    const localUsers = await getLocalUsers();
+    res.json({ users: localUsers });
+  } catch (err) {
+    res.status(500).json({ error: `Error retrieving users from local list: ${err}` });
+  }
+});
+
+app.post('/clear', async (req, res) => {
+  try {
+    await clearLocalUsers();
+    await axios.post('http://34.133.250.207/clear');
+    res.json({ message: "All users deleted!" });
+  } catch (err) {
+    res.status(500).json({ error: `Error clearing users: ${err}` });
+  }
+});
+
+async function clearLocalUsers() {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM users');
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+app.listen(port, () => { 
+  console.log(`Server is running on http://localhost:${port}`); 
+}); 
